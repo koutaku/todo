@@ -6,7 +6,6 @@
   <title>Todo</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
   <style>
@@ -16,21 +15,28 @@
     .task-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .input-bar { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
     .status-btn, .action-btn { min-width: 44px; min-height: 44px; }
+
+    /* 重要タスク */
     .imp-row {
-      background: linear-gradient(135deg, #fff1f2 0%, #fff8f8 100%) !important;
+      background: linear-gradient(135deg,#fff1f2 0%,#fff8f8 100%) !important;
       border-left: 4px solid #ef4444 !important;
       box-shadow: 0 2px 12px rgba(239,68,68,.15) !important;
     }
-    .onhold-row { opacity: 0.58; }
-    .task-enter { animation: fadeIn 0.18s ease; }
-    @keyframes fadeIn { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
-    .edit-panel { animation: editOpen 0.14s ease; transform-origin:top; }
-    @keyframes editOpen { from { opacity:0; transform:scaleY(0.93); } to { opacity:1; transform:scaleY(1); } }
+    /* 保留タスク：薄いアンバー背景・透過なし */
+    .onhold-row {
+      background: #fffbeb !important;
+      border-color: #fde68a !important;
+    }
+
+    .task-enter { animation: fadeIn .18s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(-5px);} to{opacity:1;transform:translateY(0);} }
+    .edit-panel { animation: editOpen .14s ease; transform-origin:top; }
+    @keyframes editOpen { from{opacity:0;transform:scaleY(.93);} to{opacity:1;transform:scaleY(1);} }
+
     .tab-btn {
       flex:1; border:none; cursor:pointer;
       display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-      padding:10px 4px; min-height:62px; font-size:13px; font-weight:700;
-      transition:background .18s, color .18s; position:relative;
+      padding:10px 4px; min-height:62px; transition:background .18s,color .18s;
     }
     .tab-badge { font-size:11px; font-weight:700; padding:1px 6px; border-radius:999px; line-height:1.5; }
     .status-sel-btn {
@@ -38,6 +44,17 @@
       font-size:12px; font-weight:700; cursor:pointer;
       display:flex; align-items:center; justify-content:center; gap:4px;
     }
+
+    /* ドラッグハンドル */
+    .drag-handle {
+      cursor:grab; color:#d1d5db; display:flex; align-items:center; justify-content:center;
+      width:26px; min-height:44px; flex-shrink:0; touch-action:none; border-radius:6px;
+    }
+    .drag-handle:active { cursor:grabbing; }
+    .drag-over-top    { border-top:3px solid #3b82f6 !important; }
+    .drag-over-bottom { border-bottom:3px solid #3b82f6 !important; }
+    .dragging-ghost   { opacity:0.3 !important; }
+
     /* モーダル */
     .modal-overlay {
       position:fixed; inset:0; background:rgba(15,23,42,.6); z-index:100;
@@ -48,589 +65,450 @@
       background:#fff; border-radius:24px; width:100%; max-width:480px;
       max-height:90dvh; overflow-y:auto; box-shadow:0 24px 60px rgba(0,0,0,.25);
     }
-    .step-badge {
-      width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-      font-size:12px; font-weight:800; flex-shrink:0;
-    }
+    .step-badge { width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0; }
     input[type="text"]:focus, textarea:focus { outline:none; }
-    /* 同期インジケーター */
-    @keyframes spin { to { transform:rotate(360deg); } }
-    .spinning { animation:spin 1s linear infinite; }
-    /* pulse */
+    @keyframes spin  { to{transform:rotate(360deg);} }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
-    .pulsing { animation:pulse 1.5s ease infinite; }
+    .spinning { animation:spin 1s linear infinite; }
+    .pulsing  { animation:pulse 1.5s ease infinite; }
   </style>
 </head>
 <body>
 <div id="app"></div>
-
 <script>
-/* ════════════════════════════════
-   STATE
-════════════════════════════════ */
+/* ════════ STATE ════════ */
 let S = {
-  tasks:          loadLocal(),
-  tab:            'all',
-  sortMode:       'importance',
-  inputText:      '',
-  inputCat:       'work',
-  inputImp:       false,
-  focusInput:     false,
-  editingId:      null,
-  editText:       '',
-  editCat:        'work',
-  editImp:        false,
-  editStatus:     'pending',
-  // Firebase
-  syncStatus:     'idle',    // idle | connecting | synced | error | offline
-  showSetup:      false,
-  fbConfigInput:  '',
+  tasks:S_tasks_init(),tab:'all',sortMode:'importance',
+  inputText:'',inputCat:'work',inputImp:false,focusInput:false,
+  editingId:null,editText:'',editCat:'work',editImp:false,editStatus:'pending',
+  syncStatus:'idle',showSetup:false,fbConfigInput:'',
+};
+function S_tasks_init(){ try{return JSON.parse(localStorage.getItem('todos_v2')||'[]');}catch{return[];} }
+
+const TAB_COLORS={
+  all:      {active:'#3b82f6',icon:'📋',badge:'#dbeafe',badgeText:'#1d4ed8'},
+  work:     {active:'#f97316',icon:'🏢',badge:'#fed7aa',badgeText:'#c2410c'},
+  personal: {active:'#22c55e',icon:'🏠',badge:'#bbf7d0',badgeText:'#15803d'},
+  completed:{active:'#8b5cf6',icon:'✅',badge:'#ddd6fe',badgeText:'#6d28d9'},
 };
 
-const TAB_COLORS = {
-  all:       { active:'#3b82f6', icon:'📋', badge:'#dbeafe', badgeText:'#1d4ed8' },
-  work:      { active:'#f97316', icon:'🏢', badge:'#fed7aa', badgeText:'#c2410c' },
-  personal:  { active:'#22c55e', icon:'🏠', badge:'#bbf7d0', badgeText:'#15803d' },
-  completed: { active:'#8b5cf6', icon:'✅', badge:'#ddd6fe', badgeText:'#6d28d9' },
-};
+/* ════════ STORAGE ════════ */
+function saveLocal(){ localStorage.setItem('todos_v2',JSON.stringify(S.tasks)); }
+function loadFbConfig(){ try{return JSON.parse(localStorage.getItem('fb_config')||'null');}catch{return null;} }
 
-/* ════════════════════════════════
-   LOCALSTORAGE
-════════════════════════════════ */
-function loadLocal() {
-  try { return JSON.parse(localStorage.getItem('todos_v2') || '[]'); }
-  catch { return []; }
-}
-function saveLocal() {
-  localStorage.setItem('todos_v2', JSON.stringify(S.tasks));
-}
-function loadFbConfig() {
-  try { return JSON.parse(localStorage.getItem('fb_config') || 'null'); }
-  catch { return null; }
-}
+/* ════════ FIREBASE ════════ */
+let fbRef=null, skipNextCb=false;
 
-/* ════════════════════════════════
-   FIREBASE
-════════════════════════════════ */
-let fbRef = null;
-let skipNextCb = false;   // 自分が書いた直後のコールバックをスキップ
-
-function initFirebase(config) {
-  try {
-    // 既存アプリを削除してから初期化
-    const existing = firebase.apps;
-    const doInit = () => {
+function initFirebase(config){
+  try{
+    const doInit=()=>{
       firebase.initializeApp(config);
-      const db = firebase.database();
-      fbRef = db.ref('todos');
-
-      // 接続状態の監視
-      firebase.database().ref('.info/connected').on('value', snap => {
-        if (snap.val() === true) {
-          if (S.syncStatus === 'offline') S.syncStatus = 'synced';
-          updateSyncUI();
-        } else {
-          S.syncStatus = 'offline';
-          updateSyncUI();
-        }
+      fbRef=firebase.database().ref('todos');
+      firebase.database().ref('.info/connected').on('value',snap=>{
+        S.syncStatus=snap.val()?'synced':'offline'; updateSyncUI();
       });
-
-      // タスクのリアルタイム監視
-      fbRef.on('value', snapshot => {
-        if (skipNextCb) { skipNextCb = false; S.syncStatus = 'synced'; updateSyncUI(); return; }
-        const data = snapshot.val();
-        if (Array.isArray(data) && data.length > 0) {
-          S.tasks = data;
-          saveLocal();
-          render();
-        } else if (data === null) {
-          // Firebaseが空 → ローカルデータをアップロード
-          if (S.tasks.length > 0) writeToFirebase();
-        }
-        S.syncStatus = 'synced';
-        updateSyncUI();
-      }, err => {
-        console.error('Firebase read error:', err);
-        S.syncStatus = 'error';
-        updateSyncUI();
-      });
-
-      S.syncStatus = 'connecting';
-      S.showSetup  = false;
-      localStorage.setItem('fb_config', JSON.stringify(config));
+      fbRef.on('value',snapshot=>{
+        if(skipNextCb){skipNextCb=false;S.syncStatus='synced';updateSyncUI();return;}
+        const data=snapshot.val();
+        if(Array.isArray(data)&&data.length>0){S.tasks=data;saveLocal();render();}
+        else if(data===null&&S.tasks.length>0){writeToFirebase();}
+        S.syncStatus='synced';updateSyncUI();
+      },()=>{S.syncStatus='error';updateSyncUI();});
+      S.syncStatus='connecting';S.showSetup=false;
+      localStorage.setItem('fb_config',JSON.stringify(config));
       render();
     };
-
-    if (existing.length > 0) {
-      Promise.all(existing.map(a => a.delete())).then(doInit);
-    } else {
-      doInit();
-    }
-  } catch(e) {
-    console.error('Firebase init error:', e);
-    S.syncStatus = 'error';
-    alert('Firebase設定に誤りがあります。\n' + e.message);
-    render();
-  }
+    const ex=firebase.apps;
+    if(ex.length>0) Promise.all(ex.map(a=>a.delete())).then(doInit); else doInit();
+  }catch(e){S.syncStatus='error';alert('Firebase設定エラー:\n'+e.message);render();}
 }
-
-function writeToFirebase() {
-  if (!fbRef) return;
-  skipNextCb = true;
-  S.syncStatus = 'syncing';
-  updateSyncUI();
+function writeToFirebase(){
+  if(!fbRef)return;
+  skipNextCb=true;S.syncStatus='syncing';updateSyncUI();
   fbRef.set(S.tasks)
-    .then(() => { S.syncStatus = 'synced'; updateSyncUI(); })
-    .catch(e => { console.error('Write error:', e); S.syncStatus = 'error'; updateSyncUI(); skipNextCb = false; });
+    .then(()=>{S.syncStatus='synced';updateSyncUI();})
+    .catch(()=>{S.syncStatus='error';updateSyncUI();skipNextCb=false;});
 }
-
-function save() {
-  saveLocal();
-  writeToFirebase();
+function save(){saveLocal();writeToFirebase();}
+function updateSyncUI(){
+  const el=document.getElementById('syncIndicator');
+  if(el){el.outerHTML=syncIndicatorHTML();lucide.createIcons();}else render();
 }
-
-// 同期インジケーターだけ更新（フル再レンダーを避ける）
-function updateSyncUI() {
-  const el = document.getElementById('syncIndicator');
-  if (el) el.outerHTML = syncIndicatorHTML();
-  else render();
-  lucide.createIcons();
-}
-
-/* Firebase設定をパース（JSON形式 or JS オブジェクト形式の両対応） */
-function parseFbConfig(raw) {
-  // まずJSONとして試みる
-  try { return JSON.parse(raw); } catch {}
-  // JS オブジェクト形式（const firebaseConfig = {...}）から抽出
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    // キーにクォートがないJS形式をJSONに変換
-    const jsonStr = match[0].replace(/(\w+)\s*:/g, '"$1":').replace(/'/g, '"');
-    return JSON.parse(jsonStr);
-  } catch {}
+function parseFbConfig(raw){
+  try{return JSON.parse(raw);}catch{}
+  const m=raw.match(/\{[\s\S]*\}/);
+  if(!m)return null;
+  try{return JSON.parse(m[0].replace(/(\w+)\s*:/g,'"$1":').replace(/'/g,'"'));}catch{}
   return null;
 }
-
-function connectFirebase() {
-  const raw    = document.getElementById('fbConfigInput')?.value || '';
-  const config = parseFbConfig(raw.trim());
-  if (!config || !config.apiKey || !config.databaseURL) {
-    alert('設定の読み込みに失敗しました。\ndatabaseURL が含まれているか確認してください。');
-    return;
-  }
-  initFirebase(config);
+function connectFirebase(){
+  const cfg=parseFbConfig((document.getElementById('fbConfigInput')?.value||'').trim());
+  if(!cfg||!cfg.apiKey||!cfg.databaseURL){alert('設定の読み込みに失敗しました。\ndatabaseURL が含まれているか確認してください。');return;}
+  initFirebase(cfg);
+}
+function disconnectFirebase(){
+  localStorage.removeItem('fb_config');fbRef=null;S.syncStatus='idle';S.showSetup=false;
+  firebase.apps.forEach(a=>a.delete());render();
 }
 
-function disconnectFirebase() {
-  localStorage.removeItem('fb_config');
-  fbRef = null;
-  S.syncStatus = 'idle';
-  S.showSetup  = false;
-  firebase.apps.forEach(a => a.delete());
-  render();
+/* ════════ DRAG & DROP (Desktop) ════════ */
+let D={id:null,overId:null,overAbove:true};
+function dStart(e,id){
+  D.id=id;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',id);
+  setTimeout(()=>document.getElementById('task_'+id)?.classList.add('dragging-ghost'),0);
+}
+function dOver(e,id){
+  e.preventDefault();if(D.id===id)return;
+  const el=document.getElementById('task_'+id);if(!el)return;
+  const above=e.clientY<el.getBoundingClientRect().top+el.getBoundingClientRect().height/2;
+  document.querySelectorAll('[data-task-id]').forEach(r=>r.classList.remove('drag-over-top','drag-over-bottom'));
+  el.classList.add(above?'drag-over-top':'drag-over-bottom');
+  D.overId=id;D.overAbove=above;
+}
+function dEnd(e,id){
+  document.getElementById('task_'+id)?.classList.remove('dragging-ghost');
+  document.querySelectorAll('[data-task-id]').forEach(r=>r.classList.remove('drag-over-top','drag-over-bottom'));
+  D.id=null;
+}
+function dDrop(e,id){
+  e.preventDefault();
+  if(!D.id||D.id===id){dEnd(e,id);return;}
+  reorderTasks(D.id,id,D.overAbove);D.id=null;
+}
+function reorderTasks(fromId,toId,above){
+  const fi=S.tasks.findIndex(t=>t.id===fromId);
+  const ti=S.tasks.findIndex(t=>t.id===toId);
+  if(fi<0||ti<0)return;
+  const[item]=S.tasks.splice(fi,1);
+  const ni=S.tasks.findIndex(t=>t.id===toId);
+  S.tasks.splice(above?ni:ni+1,0,item);
+  save();render();
 }
 
-/* ════════════════════════════════
-   TASK ACTIONS
-════════════════════════════════ */
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+/* ════════ TOUCH DRAG (Mobile) ════════ */
+let TD={active:false,id:null,clone:null,lastOverId:null,lastAbove:true};
+function setupTouchDrag(){
+  document.querySelectorAll('.drag-handle').forEach(handle=>{
+    const row=handle.closest('[data-task-id]');if(!row)return;
+    const taskId=row.dataset.taskId;
+    handle.addEventListener('touchstart',e=>{
+      e.preventDefault();e.stopPropagation();
+      TD.active=true;TD.id=taskId;TD.lastOverId=null;
+      const task=S.tasks.find(t=>t.id===taskId);
+      const touch=e.touches[0];
+      TD.clone=document.createElement('div');
+      TD.clone.style.cssText=`position:fixed;z-index:9999;pointer-events:none;
+        background:#fff;border:2px solid #3b82f6;border-radius:14px;
+        padding:10px 16px;font-size:14px;font-weight:700;color:#1e293b;
+        box-shadow:0 8px 30px rgba(59,130,246,.35);max-width:72vw;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        transform:rotate(2deg) scale(1.04);
+        left:${touch.clientX-30}px;top:${touch.clientY-30}px;`;
+      TD.clone.textContent=task?.text||'';
+      document.body.appendChild(TD.clone);
+      row.classList.add('dragging-ghost');
+    },{passive:false});
 
-function addTask() {
-  const text = S.inputText.trim();
-  if (!text) return;
-  S.tasks.push({ id: uid(), text, cat: S.inputCat, imp: S.inputImp, status: 'pending', at: Date.now() });
-  S.inputText = ''; S.inputImp = false; S.focusInput = true;
-  save(); render();
-}
-const CYCLE = { pending:'onhold', onhold:'completed', completed:'pending' };
-function cycleStatus(id) {
-  const t = S.tasks.find(t => t.id === id);
-  if (t) { t.status = CYCLE[t.status]; save(); render(); }
-}
-function restoreTask(id) {
-  const t = S.tasks.find(t => t.id === id);
-  if (t) { t.status = 'pending'; save(); render(); }
-}
-function deleteTask(id) {
-  S.tasks = S.tasks.filter(t => t.id !== id);
-  if (S.editingId === id) S.editingId = null;
-  save(); render();
-}
-function clearCompleted() {
-  S.tasks = S.tasks.filter(t => t.status !== 'completed');
-  save(); render();
-}
+    handle.addEventListener('touchmove',e=>{
+      if(!TD.active)return;e.preventDefault();
+      const touch=e.touches[0];
+      if(TD.clone){TD.clone.style.left=(touch.clientX-30)+'px';TD.clone.style.top=(touch.clientY-30)+'px';}
+      if(TD.clone)TD.clone.style.display='none';
+      const elUnder=document.elementFromPoint(touch.clientX,touch.clientY);
+      if(TD.clone)TD.clone.style.display='';
+      const overRow=elUnder?.closest('[data-task-id]');
+      const overId=overRow?.dataset.taskId;
+      document.querySelectorAll('[data-task-id]').forEach(r=>r.classList.remove('drag-over-top','drag-over-bottom'));
+      if(overId&&overId!==TD.id){
+        TD.lastOverId=overId;
+        const overEl=document.getElementById('task_'+overId);
+        if(overEl){
+          const rect=overEl.getBoundingClientRect();
+          TD.lastAbove=touch.clientY<rect.top+rect.height/2;
+          overEl.classList.add(TD.lastAbove?'drag-over-top':'drag-over-bottom');
+        }
+      }
+    },{passive:false});
 
-/* ════════════════════════════════
-   EDIT
-════════════════════════════════ */
-function startEdit(id) {
-  const t = S.tasks.find(t => t.id === id);
-  if (!t) return;
-  S.editingId = id; S.editText = t.text; S.editCat = t.cat;
-  S.editImp = t.imp; S.editStatus = t.status;
-  render();
-  setTimeout(() => {
-    const el = document.getElementById('editInput_' + id);
-    if (el) { el.focus(); const l = el.value.length; el.setSelectionRange(l, l); }
-  }, 30);
-}
-function cancelEdit() { S.editingId = null; render(); }
-function saveEdit(id) {
-  const el   = document.getElementById('editInput_' + id);
-  const text = (el ? el.value : S.editText).trim();
-  if (!text) return;
-  const t = S.tasks.find(t => t.id === id);
-  if (t) { t.text = text; t.cat = S.editCat; t.imp = S.editImp; t.status = S.editStatus; }
-  S.editingId = null;
-  save(); render();
-}
-function focusEditInput() {
-  setTimeout(() => {
-    const el = document.getElementById('editInput_' + S.editingId);
-    if (el) { el.focus(); const l = el.value.length; el.setSelectionRange(l, l); }
-  }, 20);
-}
-function setEditStatus(s) { S.editStatus = s; render(); focusEditInput(); }
-function toggleEditCat()  { S.editCat = S.editCat==='work'?'personal':'work'; render(); focusEditInput(); }
-function toggleEditImp()  { S.editImp = !S.editImp; render(); focusEditInput(); }
-
-/* ════════════════════════════════
-   UI CONTROLS
-════════════════════════════════ */
-function setTab(tab)  { S.editingId = null; S.tab = tab; render(); }
-function toggleSort() { S.sortMode = S.sortMode==='importance'?'registered':'importance'; render(); }
-function toggleCat()  { S.inputCat = S.inputCat==='work'?'personal':'work'; S.focusInput=true; render(); }
-function toggleImp()  { S.inputImp = !S.inputImp; S.focusInput=true; render(); }
-function openSetup()  { S.showSetup = true; render(); }
-function closeSetup() { S.showSetup = false; render(); }
-
-/* ════════════════════════════════
-   SORT / FILTER
-════════════════════════════════ */
-function sorted(arr) {
-  if (S.sortMode === 'registered') return [...arr].sort((a,b) => a.at - b.at);
-  const so = { pending:0, onhold:1 };
-  return [...arr].sort((a,b) => {
-    if (a.imp !== b.imp) return (b.imp?1:0)-(a.imp?1:0);
-    const ao=so[a.status]??2, bo=so[b.status]??2;
-    if (ao !== bo) return ao - bo;
-    return a.at - b.at;
+    const endTouch=e=>{
+      if(!TD.active)return;e.preventDefault();
+      if(TD.clone){TD.clone.remove();TD.clone=null;}
+      document.querySelectorAll('[data-task-id]').forEach(r=>r.classList.remove('dragging-ghost','drag-over-top','drag-over-bottom'));
+      const lastOver=TD.lastOverId;const lastAbove=TD.lastAbove;const fromId=TD.id;
+      TD.active=false;TD.id=null;TD.lastOverId=null;
+      if(lastOver&&lastOver!==fromId){reorderTasks(fromId,lastOver,lastAbove);}
+      else render();
+    };
+    handle.addEventListener('touchend',endTouch,{passive:false});
+    handle.addEventListener('touchcancel',endTouch,{passive:false});
   });
 }
-function visible() {
-  const active = S.tasks.filter(t => t.status !== 'completed');
-  if (S.tab==='completed') return S.tasks.filter(t => t.status==='completed');
-  if (S.tab==='all')       return sorted(active);
-  if (S.tab==='work')      return sorted(active.filter(t=>t.cat==='work'));
-  if (S.tab==='personal')  return sorted(active.filter(t=>t.cat==='personal'));
-  return [];
+
+/* ════════ TASK ACTIONS ════════ */
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function addTask(){
+  const text=S.inputText.trim();if(!text)return;
+  S.tasks.push({id:uid(),text,cat:S.inputCat,imp:S.inputImp,status:'pending',at:Date.now()});
+  S.inputText='';S.inputImp=false;S.focusInput=true;save();render();
 }
-function cnt(tab) {
-  if (tab==='completed') return S.tasks.filter(t=>t.status==='completed').length;
-  const a = S.tasks.filter(t=>t.status!=='completed');
-  if (tab==='all')       return a.length;
-  if (tab==='work')      return a.filter(t=>t.cat==='work').length;
-  if (tab==='personal')  return a.filter(t=>t.cat==='personal').length;
+const CYCLE={pending:'onhold',onhold:'completed',completed:'pending'};
+function cycleStatus(id){const t=S.tasks.find(t=>t.id===id);if(t){t.status=CYCLE[t.status];save();render();}}
+function toggleImpQuick(id){const t=S.tasks.find(t=>t.id===id);if(t){t.imp=!t.imp;save();render();}}
+function restoreTask(id){const t=S.tasks.find(t=>t.id===id);if(t){t.status='pending';save();render();}}
+function deleteTask(id){S.tasks=S.tasks.filter(t=>t.id!==id);if(S.editingId===id)S.editingId=null;save();render();}
+function clearCompleted(){S.tasks=S.tasks.filter(t=>t.status!=='completed');save();render();}
+
+/* ════════ EDIT ════════ */
+function startEdit(id){
+  const t=S.tasks.find(t=>t.id===id);if(!t)return;
+  S.editingId=id;S.editText=t.text;S.editCat=t.cat;S.editImp=t.imp;S.editStatus=t.status;
+  render();
+  setTimeout(()=>{const el=document.getElementById('editInput_'+id);if(el){el.focus();const l=el.value.length;el.setSelectionRange(l,l);}},30);
+}
+function cancelEdit(){S.editingId=null;render();}
+function saveEdit(id){
+  const el=document.getElementById('editInput_'+id);
+  const text=(el?el.value:S.editText).trim();if(!text)return;
+  const t=S.tasks.find(t=>t.id===id);
+  if(t){t.text=text;t.cat=S.editCat;t.imp=S.editImp;t.status=S.editStatus;}
+  S.editingId=null;save();render();
+}
+function focusEdit(){setTimeout(()=>{const el=document.getElementById('editInput_'+S.editingId);if(el){el.focus();const l=el.value.length;el.setSelectionRange(l,l);}},20);}
+function setEditStatus(s){S.editStatus=s;render();focusEdit();}
+function toggleEditCat(){S.editCat=S.editCat==='work'?'personal':'work';render();focusEdit();}
+function toggleEditImp(){S.editImp=!S.editImp;render();focusEdit();}
+
+/* ════════ UI CONTROLS ════════ */
+function setTab(tab){S.editingId=null;S.tab=tab;render();}
+function toggleSort(){S.sortMode=S.sortMode==='importance'?'registered':'importance';render();}
+function toggleCat(){S.inputCat=S.inputCat==='work'?'personal':'work';S.focusInput=true;render();}
+function toggleImp(){S.inputImp=!S.inputImp;S.focusInput=true;render();}
+function openSetup(){S.showSetup=true;render();}
+function closeSetup(){S.showSetup=false;render();}
+
+/* ════════ SORT / FILTER ════════ */
+function sorted(arr){
+  if(S.sortMode==='registered')return arr; // 配列順そのまま＝手動並び替え反映
+  return[...arr].sort((a,b)=>{if(a.imp!==b.imp)return(b.imp?1:0)-(a.imp?1:0);return 0;});
+}
+function visible(){
+  const active=S.tasks.filter(t=>t.status!=='completed');
+  if(S.tab==='completed')return S.tasks.filter(t=>t.status==='completed');
+  if(S.tab==='all')      return sorted(active);
+  if(S.tab==='work')     return sorted(active.filter(t=>t.cat==='work'));
+  if(S.tab==='personal') return sorted(active.filter(t=>t.cat==='personal'));
+  return[];
+}
+function cnt(tab){
+  if(tab==='completed')return S.tasks.filter(t=>t.status==='completed').length;
+  const a=S.tasks.filter(t=>t.status!=='completed');
+  if(tab==='all')      return a.length;
+  if(tab==='work')     return a.filter(t=>t.cat==='work').length;
+  if(tab==='personal') return a.filter(t=>t.cat==='personal').length;
   return 0;
 }
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-/* ════════════════════════════════
-   SYNC INDICATOR HTML
-════════════════════════════════ */
-function syncIndicatorHTML() {
-  const map = {
-    idle:       { col:'#94a3b8', icon:'cloud',            label:'未接続',     cls:'' },
-    connecting: { col:'#f59e0b', icon:'loader',            label:'接続中...',  cls:'spinning' },
-    syncing:    { col:'#3b82f6', icon:'loader',            label:'同期中...',  cls:'spinning' },
-    synced:     { col:'#22c55e', icon:'cloud-check-alt',   label:'同期済み',   cls:'' },
-    error:      { col:'#ef4444', icon:'cloud-off',         label:'接続エラー', cls:'pulsing' },
-    offline:    { col:'#f59e0b', icon:'wifi-off',          label:'オフライン', cls:'' },
+/* ════════ SYNC INDICATOR ════════ */
+function syncIndicatorHTML(){
+  const map={
+    idle:      {col:'#94a3b8',icon:'cloud',      label:'未接続',   cls:''},
+    connecting:{col:'#f59e0b',icon:'loader',      label:'接続中...', cls:'spinning'},
+    syncing:   {col:'#3b82f6',icon:'loader',      label:'同期中...', cls:'spinning'},
+    synced:    {col:'#22c55e',icon:'cloud-check', label:'同期済み', cls:''},
+    error:     {col:'#ef4444',icon:'cloud-off',   label:'接続エラー',cls:'pulsing'},
+    offline:   {col:'#f59e0b',icon:'wifi-off',    label:'オフライン',cls:''},
   };
-  const m = map[S.syncStatus] || map.idle;
-  // lucide に cloud-check-alt はないので cloud-check を使う
-  const realIcon = m.icon === 'cloud-check-alt' ? 'cloud-check' : m.icon;
-  return `<div id="syncIndicator" onclick="openSetup()"
-    style="display:flex; align-items:center; gap:4px; padding:4px 8px; border-radius:20px; background:${m.col}18; border:1px solid ${m.col}40; cursor:pointer;">
-    <i data-lucide="${realIcon}" class="${m.cls}" style="width:13px; height:13px; color:${m.col};"></i>
-    <span style="font-size:10px; font-weight:700; color:${m.col};">${m.label}</span>
+  const m=map[S.syncStatus]||map.idle;
+  return`<div id="syncIndicator" onclick="openSetup()"
+    style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:20px;background:${m.col}18;border:1px solid ${m.col}40;cursor:pointer;">
+    <i data-lucide="${m.icon}" class="${m.cls}" style="width:13px;height:13px;color:${m.col};"></i>
+    <span style="font-size:10px;font-weight:700;color:${m.col};">${m.label}</span>
   </div>`;
 }
 
-/* ════════════════════════════════
-   SETUP MODAL
-════════════════════════════════ */
-function setupModalHTML() {
-  const hasCfg  = !!loadFbConfig();
-  const isConn  = fbRef !== null;
-  const connStr = isConn
-    ? `<div style="margin-bottom:16px; padding:12px 14px; background:#f0fdf4; border-radius:12px; border:1px solid #bbf7d0; color:#16a34a; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px;">
-        <i data-lucide="check-circle-2" style="width:16px; height:16px; flex-shrink:0;"></i>
-        Firebaseに接続済みです。全デバイスで同期中。
-       </div>`
-    : '';
-
-  return `
-  <div class="modal-overlay" onclick="if(event.target===this)closeSetup()">
+/* ════════ SETUP MODAL ════════ */
+function setupModalHTML(){
+  const hasCfg=!!loadFbConfig(),isConn=fbRef!==null;
+  return`<div class="modal-overlay" onclick="if(event.target===this)closeSetup()">
     <div class="modal-box">
-      <!-- ヘッダー -->
-      <div style="padding:20px 20px 0; display:flex; align-items:center; justify-content:space-between;">
-        <div style="font-size:17px; font-weight:800; color:#1e293b;">☁️ Firebase 同期設定</div>
-        <button onclick="closeSetup()" style="width:36px; height:36px; border-radius:50%; border:none; background:#f1f5f9; color:#64748b; cursor:pointer; display:flex; align-items:center; justify-content:center;">
-          <i data-lucide="x" style="width:18px; height:18px;"></i>
-        </button>
+      <div style="padding:20px 20px 0;display:flex;align-items:center;justify-content:space-between;">
+        <div style="font-size:17px;font-weight:800;color:#1e293b;">☁️ Firebase 同期設定</div>
+        <button onclick="closeSetup()" style="width:36px;height:36px;border-radius:50%;border:none;background:#f1f5f9;color:#64748b;cursor:pointer;display:flex;align-items:center;justify-content:center;">
+          <i data-lucide="x" style="width:18px;height:18px;"></i></button>
       </div>
-
-      <div style="padding:16px 20px 24px; display:flex; flex-direction:column; gap:16px;">
-        ${connStr}
-
-        <!-- 説明 -->
-        <div style="background:#eff6ff; border-radius:14px; padding:14px; font-size:13px; color:#1d4ed8; line-height:1.6; border:1px solid #bfdbfe;">
-          <b>Firebaseとは？</b><br>
-          Googleが提供する無料のクラウドデータベースです。<br>
-          スマホ・iPad・PCどこからでも同じTodoリストをリアルタイムで共有できます。
+      <div style="padding:16px 20px 24px;display:flex;flex-direction:column;gap:16px;">
+        ${isConn?`<div style="padding:12px 14px;background:#f0fdf4;border-radius:12px;border:1px solid #bbf7d0;color:#16a34a;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;"><i data-lucide="check-circle-2" style="width:16px;height:16px;"></i>Firebaseに接続済みです。全デバイスで同期中。</div>`:''}
+        <div style="background:#eff6ff;border-radius:14px;padding:14px;font-size:13px;color:#1d4ed8;line-height:1.6;border:1px solid #bfdbfe;">
+          <b>Firebase設定コードを貼り付けて接続してください。</b>
         </div>
-
-        <!-- Step 1 -->
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div class="step-badge" style="background:#3b82f6; color:#fff;">1</div>
-            <span style="font-size:14px; font-weight:700; color:#1e293b;">Firebaseプロジェクトを作成</span>
-          </div>
-          <div style="margin-left:34px; font-size:13px; color:#475569; line-height:1.7;">
-            ① <a href="https://console.firebase.google.com" target="_blank" style="color:#3b82f6; font-weight:600;">console.firebase.google.com</a> を開く<br>
-            ② Googleアカウントでログイン<br>
-            ③「プロジェクトを作成」→ 名前を入力（例: my-todo）→ 続行<br>
-            ④ Googleアナリティクスは「無効」で OK → 「プロジェクトを作成」
-          </div>
-        </div>
-
-        <!-- Step 2 -->
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div class="step-badge" style="background:#f97316; color:#fff;">2</div>
-            <span style="font-size:14px; font-weight:700; color:#1e293b;">Realtime Databaseを有効化</span>
-          </div>
-          <div style="margin-left:34px; font-size:13px; color:#475569; line-height:1.7;">
-            ① 左メニュー「構築」→「Realtime Database」<br>
-            ②「データベースを作成」→ ロケーション: <b>us-central1</b>（推奨）<br>
-            ③「テストモードで開始」を選択 → 「有効にする」<br>
-            <span style="color:#ef4444; font-size:12px;">※テストモードは30日間。後でルールを変更できます</span>
-          </div>
-        </div>
-
-        <!-- Step 3 -->
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div class="step-badge" style="background:#22c55e; color:#fff;">3</div>
-            <span style="font-size:14px; font-weight:700; color:#1e293b;">設定コードを取得してここに貼る</span>
-          </div>
-          <div style="margin-left:34px; font-size:13px; color:#475569; line-height:1.7;">
-            ① 歯車アイコン「プロジェクトの設定」→「全般」タブ<br>
-            ② 下にスクロール→「マイアプリ」→「&lt;/&gt;」ボタン<br>
-            ③ アプリ名を入力 → 「アプリを登録」<br>
-            ④ 表示される <b>firebaseConfig の { } の中身</b> をコピー<br>
-            ⑤ 下のボックスに貼り付けて「接続する」をタップ
-          </div>
-          <textarea id="fbConfigInput"
-            placeholder='{&#10;  "apiKey": "AIza...",&#10;  "authDomain": "my-todo.firebaseapp.com",&#10;  "databaseURL": "https://my-todo-default-rtdb.firebaseio.com",&#10;  "projectId": "my-todo",&#10;  "storageBucket": "my-todo.appspot.com",&#10;  "messagingSenderId": "123456789",&#10;  "appId": "1:123456789:web:abcdef"&#10;}'
-            style="width:100%; height:140px; padding:12px; border-radius:12px; border:1.5px solid #e2e8f0; background:#f8fafc; font-size:12px; font-family:monospace; color:#334155; resize:vertical; margin-top:4px;"
-            oninput="S.fbConfigInput=this.value"></textarea>
-          <button onclick="connectFirebase()" style="width:100%; min-height:48px; border-radius:14px; background:linear-gradient(135deg,#3b82f6,#6366f1); color:#fff; font-size:15px; font-weight:800; border:none; cursor:pointer; box-shadow:0 4px 14px rgba(99,102,241,.35);">
-            ☁️ 接続する
-          </button>
-        </div>
-
-        <!-- 接続済みの場合：切断ボタン -->
-        ${hasCfg ? `
-        <div style="border-top:1px solid #f1f5f9; padding-top:12px;">
-          <button onclick="disconnectFirebase()" style="width:100%; min-height:44px; border-radius:12px; background:#fef2f2; color:#ef4444; font-size:13px; font-weight:600; border:1.5px solid #fecaca; cursor:pointer;">
-            Firebase接続を解除する
-          </button>
-        </div>` : ''}
+        <textarea id="fbConfigInput"
+          placeholder='{"apiKey":"...","databaseURL":"https://...firebaseio.com",...}'
+          style="width:100%;height:120px;padding:12px;border-radius:12px;border:1.5px solid #e2e8f0;background:#f8fafc;font-size:12px;font-family:monospace;color:#334155;resize:vertical;"
+          oninput="S.fbConfigInput=this.value"></textarea>
+        <button onclick="connectFirebase()" style="width:100%;min-height:48px;border-radius:14px;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-size:15px;font-weight:800;border:none;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,.35);">
+          ☁️ 接続する
+        </button>
+        ${hasCfg?`<div style="border-top:1px solid #f1f5f9;padding-top:12px;">
+          <button onclick="disconnectFirebase()" style="width:100%;min-height:44px;border-radius:12px;background:#fef2f2;color:#ef4444;font-size:13px;font-weight:600;border:1.5px solid #fecaca;cursor:pointer;">
+            Firebase接続を解除する</button></div>`:''}
       </div>
     </div>
   </div>`;
 }
 
-/* ════════════════════════════════
-   MAIN RENDER
-════════════════════════════════ */
-function render() {
-  const tasks       = visible();
-  const isCompleted = S.tab === 'completed';
-
-  document.getElementById('app').innerHTML = `
-    <!-- Tabs -->
-    <div style="background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:30; box-shadow:0 2px 8px rgba(0,0,0,.06);">
-      <div style="display:flex;">
-        ${tabBtn('all')}${tabBtn('work')}${tabBtn('personal')}${tabBtn('completed')}
-      </div>
-      <!-- 同期バー -->
-      <div style="display:flex; align-items:center; justify-content:flex-end; padding:4px 10px 6px; gap:6px; border-top:1px solid #f8fafc;">
+/* ════════ MAIN RENDER ════════ */
+function render(){
+  const tasks=visible(),isCompleted=S.tab==='completed';
+  document.getElementById('app').innerHTML=`
+    <div style="background:#fff;border-bottom:1px solid #e2e8f0;position:sticky;top:0;z-index:30;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+      <div style="display:flex;">${tabBtn('all')}${tabBtn('work')}${tabBtn('personal')}${tabBtn('completed')}</div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;padding:4px 10px 6px;border-top:1px solid #f8fafc;">
         ${syncIndicatorHTML()}
       </div>
     </div>
 
-    <!-- Sort Bar -->
-    ${!isCompleted ? `
-    <div style="background:#f8fafc; border-bottom:1px solid #f1f5f9; padding:7px 16px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
-      <span style="font-size:11px; color:#94a3b8; font-weight:500;">並び替え</span>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span style="font-size:11px; font-weight:700; color:${S.sortMode==='importance'?'#ef4444':'#cbd5e1'};">重要度優先</span>
-        <button onclick="toggleSort()" style="width:42px; height:24px; border-radius:999px; background:${S.sortMode==='registered'?'#64748b':'#ef4444'}; position:relative; border:none; cursor:pointer; flex-shrink:0;">
-          <span style="position:absolute; top:3px; width:18px; height:18px; background:#fff; border-radius:50%; box-shadow:0 1px 3px rgba(0,0,0,.2); left:${S.sortMode==='registered'?'21px':'3px'}; transition:left .2s;"></span>
+    ${!isCompleted?`
+    <div style="background:#f8fafc;border-bottom:1px solid #f1f5f9;padding:7px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <span style="font-size:11px;color:#94a3b8;font-weight:500;">並び替え</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:11px;font-weight:700;color:${S.sortMode==='importance'?'#ef4444':'#cbd5e1'};">重要度優先</span>
+        <button onclick="toggleSort()" style="width:42px;height:24px;border-radius:999px;background:${S.sortMode==='registered'?'#64748b':'#ef4444'};position:relative;border:none;cursor:pointer;flex-shrink:0;">
+          <span style="position:absolute;top:3px;width:18px;height:18px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.2);left:${S.sortMode==='registered'?'21px':'3px'};transition:left .2s;"></span>
         </button>
-        <span style="font-size:11px; font-weight:700; color:${S.sortMode==='registered'?'#64748b':'#cbd5e1'};">登録順</span>
+        <span style="font-size:11px;font-weight:700;color:${S.sortMode==='registered'?'#64748b':'#cbd5e1'};">手動順</span>
       </div>
-    </div>` : ''}
+    </div>`:''}
 
-    <!-- Task List -->
     <div class="task-list" style="padding:8px 0 0;">
-      ${tasks.length === 0 ? emptyState() : tasks.map(t => taskRow(t)).join('')}
-      ${isCompleted && tasks.length > 0 ? `
+      ${tasks.length===0?emptyState():tasks.map(t=>taskRow(t)).join('')}
+      ${isCompleted&&tasks.length>0?`
       <div style="padding:8px 12px 16px;">
-        <button onclick="clearCompleted()" style="width:100%; min-height:46px; border-radius:14px; background:#fef2f2; color:#ef4444; font-size:13px; font-weight:600; border:1.5px solid #fecaca; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
-          <i data-lucide="trash-2" style="width:16px; height:16px;"></i> 完了済みを一括削除
+        <button onclick="clearCompleted()" style="width:100%;min-height:46px;border-radius:14px;background:#fef2f2;color:#ef4444;font-size:13px;font-weight:600;border:1.5px solid #fecaca;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+          <i data-lucide="trash-2" style="width:16px;height:16px;"></i> 完了済みを一括削除
         </button>
-      </div>` : ''}
+      </div>`:''}
       <div style="height:86px;"></div>
     </div>
 
-    <!-- Input Bar -->
-    <div class="input-bar" style="background:#fff; border-top:1px solid #e2e8f0; padding:10px 10px 12px; position:sticky; bottom:0; z-index:30; box-shadow:0 -4px 20px rgba(0,0,0,.07);">
-      <div style="display:flex; align-items:center; gap:6px;">
+    <div class="input-bar" style="background:#fff;border-top:1px solid #e2e8f0;padding:10px 10px 12px;position:sticky;bottom:0;z-index:30;box-shadow:0 -4px 20px rgba(0,0,0,.07);">
+      <div style="display:flex;align-items:center;gap:6px;">
         <button onclick="toggleImp()" class="action-btn"
-          style="border-radius:12px; background:${S.inputImp?'#fef2f2':'#f8fafc'}; color:${S.inputImp?'#ef4444':'#cbd5e1'}; border:1.5px solid ${S.inputImp?'#fecaca':'#e2e8f0'}; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;">
-          <i data-lucide="flag" style="width:18px; height:18px;"></i>
+          style="border-radius:12px;background:${S.inputImp?'#fef2f2':'#f8fafc'};color:${S.inputImp?'#ef4444':'#cbd5e1'};border:1.5px solid ${S.inputImp?'#fecaca':'#e2e8f0'};display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
+          <i data-lucide="flag" style="width:18px;height:18px;"></i>
         </button>
-        <input id="taskInput" type="text" inputmode="text" autocomplete="off"
-          placeholder="タスクを追加..."
-          value="${esc(S.inputText)}"
-          oninput="S.inputText=this.value"
+        <input id="taskInput" type="text" inputmode="text" autocomplete="off" placeholder="タスクを追加..."
+          value="${esc(S.inputText)}" oninput="S.inputText=this.value"
           onkeydown="if(event.key==='Enter'&&!event.isComposing)addTask()"
-          style="flex:1; min-height:44px; padding:0 12px; border-radius:12px; border:1.5px solid #e2e8f0; background:#f8fafc; font-size:15px; color:#1e293b;" />
+          style="flex:1;min-height:44px;padding:0 12px;border-radius:12px;border:1.5px solid #e2e8f0;background:#f8fafc;font-size:15px;color:#1e293b;" />
         <button onclick="toggleCat()" class="action-btn"
-          style="border-radius:12px; background:${S.inputCat==='work'?'#fff7ed':'#f0fdf4'}; color:${S.inputCat==='work'?'#f97316':'#22c55e'}; border:1.5px solid ${S.inputCat==='work'?'#fed7aa':'#bbf7d0'}; font-size:12px; font-weight:700; padding:0 10px; cursor:pointer; flex-shrink:0; white-space:nowrap;">
+          style="border-radius:12px;background:${S.inputCat==='work'?'#fff7ed':'#f0fdf4'};color:${S.inputCat==='work'?'#f97316':'#22c55e'};border:1.5px solid ${S.inputCat==='work'?'#fed7aa':'#bbf7d0'};font-size:12px;font-weight:700;padding:0 10px;cursor:pointer;flex-shrink:0;white-space:nowrap;">
           ${S.inputCat==='work'?'🏢 仕事':'🏠 個人'}
         </button>
         <button onclick="addTask()" class="action-btn"
-          style="border-radius:12px; background:#3b82f6; color:#fff; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;">
-          <i data-lucide="plus" style="width:22px; height:22px;"></i>
+          style="border-radius:12px;background:#3b82f6;color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
+          <i data-lucide="plus" style="width:22px;height:22px;"></i>
         </button>
       </div>
     </div>
 
-    <!-- Setup Modal -->
-    ${S.showSetup ? setupModalHTML() : ''}
+    ${S.showSetup?setupModalHTML():''}
   `;
-
   lucide.createIcons();
-
-  if (S.focusInput) {
-    S.focusInput = false;
-    const inp = document.getElementById('taskInput');
-    if (inp) { inp.focus(); const l = inp.value.length; inp.setSelectionRange(l, l); }
+  setupTouchDrag();
+  if(S.focusInput){
+    S.focusInput=false;
+    const inp=document.getElementById('taskInput');
+    if(inp){inp.focus();const l=inp.value.length;inp.setSelectionRange(l,l);}
   }
 }
 
-/* ════════════════════════════════
-   TAB BUTTON
-════════════════════════════════ */
-function tabBtn(id) {
-  const active = S.tab === id;
-  const c      = cnt(id);
-  const col    = TAB_COLORS[id];
-  const labels = { all:'残タスク', work:'仕事', personal:'個人', completed:'完了' };
-  const bg      = active ? col.active : '#f8fafc';
-  const textCol = active ? '#fff' : '#94a3b8';
-  return `
-    <button onclick="setTab('${id}')" class="tab-btn"
-      style="background:${bg}; color:${textCol}; border-top:none; border-left:none; border-right:none; border-bottom:${active?'3px solid rgba(0,0,0,.15)':'3px solid transparent'};">
-      <span style="font-size:16px; line-height:1;">${col.icon}</span>
-      <span style="font-size:12px; font-weight:700; color:${textCol};">${labels[id]}</span>
-      ${c > 0 ? `<span class="tab-badge" style="background:${active?'rgba(255,255,255,.3)':col.badge}; color:${active?'#fff':col.badgeText};">${c}</span>` : '<span style="height:16px;"></span>'}
-    </button>`;
+/* ════════ TAB BUTTON ════════ */
+function tabBtn(id){
+  const active=S.tab===id,c=cnt(id),col=TAB_COLORS[id];
+  const labels={all:'全タスク',work:'仕事',personal:'個人',completed:'完了'};
+  const bg=active?col.active:'#f8fafc',tc=active?'#fff':'#94a3b8';
+  return`<button onclick="setTab('${id}')" class="tab-btn"
+    style="background:${bg};color:${tc};border-top:none;border-left:none;border-right:none;border-bottom:${active?'3px solid rgba(0,0,0,.15)':'3px solid transparent'};">
+    <span style="font-size:16px;line-height:1;">${col.icon}</span>
+    <span style="font-size:12px;font-weight:700;color:${tc};">${labels[id]}</span>
+    ${c>0?`<span class="tab-badge" style="background:${active?'rgba(255,255,255,.3)':col.badge};color:${active?'#fff':col.badgeText};">${c}</span>`:'<span style="height:16px;"></span>'}
+  </button>`;
 }
 
-/* ════════════════════════════════
-   TASK ROW
-════════════════════════════════ */
-function taskRow(t) {
-  const isPending   = t.status==='pending';
-  const isOnhold    = t.status==='onhold';
-  const isCompleted = t.status==='completed';
-  const isEditing   = S.editingId===t.id;
+/* ════════ TASK ROW ════════ */
+function taskRow(t){
+  const isPending=t.status==='pending',isOnhold=t.status==='onhold',isCompleted=t.status==='completed',isEditing=S.editingId===t.id;
+  let icon,iconColor,iconBg;
+  if(isPending)     {icon='square';      iconColor='#94a3b8';iconBg='#f8fafc';}
+  else if(isOnhold) {icon='clock';       iconColor='#d97706';iconBg='#fef3c7';}
+  else              {icon='check-square';iconColor='#22c55e';iconBg='#f0fdf4';}
 
-  let icon, iconColor, iconBg;
-  if (isPending)     { icon='square';      iconColor='#94a3b8'; iconBg='#f8fafc'; }
-  else if (isOnhold) { icon='clock';        iconColor='#f59e0b'; iconBg='#fffbeb'; }
-  else               { icon='check-square'; iconColor='#22c55e'; iconBg='#f0fdf4'; }
+  const impClass   =(t.imp&&!isCompleted)?'imp-row':'';
+  const onholdClass=isOnhold?'onhold-row':'';
+  const rowBorder  =(t.imp&&!isCompleted)?'#fca5a5':isOnhold?'#fde68a':'#e2e8f0';
+  const textDeco   =isCompleted?'line-through':'none';
+  const textColor  =isCompleted?'#cbd5e1':t.imp?'#991b1b':'#1e293b'; // 保留も通常色
+  const textWeight =(t.imp&&!isCompleted)?700:400;
 
-  const impClass  = (t.imp && !isCompleted) ? 'imp-row'   : '';
-  const ohClass   = isOnhold               ? 'onhold-row' : '';
-  const rowBorder = (t.imp && !isCompleted) ? '#fca5a5'   : '#e2e8f0';
+  const catLabel=t.cat==='work'
+    ?`<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#fff7ed;color:#fb923c;font-weight:600;">🏢 仕事</span>`
+    :`<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#f0fdf4;color:#4ade80;font-weight:600;">🏠 個人</span>`;
+  const impBadge=(t.imp&&!isCompleted)
+    ?`<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#ef4444;font-weight:700;border:1px solid #fca5a5;">⚑ 重要</span>`:'';
+  const onholdBadge=isOnhold
+    ?`<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:#fef3c7;color:#d97706;font-weight:700;border:1px solid #fde68a;">⏸ 保留中</span>`:'';
 
-  const textDeco   = isCompleted ? 'line-through' : 'none';
-  const textColor  = isCompleted ? '#cbd5e1' : isOnhold ? '#94a3b8' : t.imp ? '#991b1b' : '#1e293b';
-  const textWeight = (t.imp && !isCompleted) ? 700 : 400;
+  const dragHandle=!isCompleted?`
+    <div class="drag-handle" data-task-id="${t.id}">
+      <i data-lucide="grip-vertical" style="width:16px;height:16px;"></i>
+    </div>`:
+    `<div style="width:8px;flex-shrink:0;"></div>`;
 
-  const catLabel = t.cat==='work'
-    ? `<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#fff7ed;color:#fb923c;font-weight:600;">🏢 仕事</span>`
-    : `<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#f0fdf4;color:#4ade80;font-weight:600;">🏠 個人</span>`;
-  const impBadge = (t.imp && !isCompleted)
-    ? `<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#ef4444;font-weight:700;border:1px solid #fca5a5;">⚑ 重要</span>`
-    : '';
+  // クイック重要度フラグ（右端）
+  const flagBtn=!isCompleted?`
+    <button onclick="toggleImpQuick('${t.id}')" class="action-btn"
+      style="border-radius:10px;background:${t.imp?'#fef2f2':'transparent'};color:${t.imp?'#ef4444':'#d1d5db'};border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
+      <i data-lucide="flag" style="width:17px;height:17px;"></i>
+    </button>`:'';
 
-  const completedActions = S.tab==='completed' ? `
+  const completedActions=isCompleted?`
     <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
       <button onclick="restoreTask('${t.id}')" class="action-btn"
-        style="border-radius:10px;background:#eff6ff;color:#3b82f6;border:1.5px solid #bfdbfe;font-size:11px;font-weight:700;padding:0 8px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;">
+        style="border-radius:10px;background:#eff6ff;color:#3b82f6;border:1.5px solid #bfdbfe;font-size:11px;font-weight:700;padding:0 8px;cursor:pointer;display:flex;align-items:center;gap:3px;">
         <i data-lucide="undo-2" style="width:13px;height:13px;"></i>戻す
       </button>
       <button onclick="deleteTask('${t.id}')" class="action-btn"
-        style="border-radius:10px;background:#fef2f2;color:#ef4444;border:1.5px solid #fecaca;font-size:11px;font-weight:700;padding:0 8px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:3px;">
+        style="border-radius:10px;background:#fef2f2;color:#ef4444;border:1.5px solid #fecaca;font-size:11px;font-weight:700;padding:0 8px;cursor:pointer;display:flex;align-items:center;gap:3px;">
         <i data-lucide="trash-2" style="width:13px;height:13px;"></i>削除
       </button>
-    </div>` : '';
+    </div>`:'';
 
-  /* 通常表示 */
-  const normalContent = `
+  const normalContent=`
+    ${dragHandle}
     <button onclick="cycleStatus('${t.id}')" class="status-btn"
       style="border-radius:12px;background:${iconBg};border:none;color:${iconColor};display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
       <i data-lucide="${icon}" style="width:22px;height:22px;"></i>
     </button>
     <div style="flex:1;min-width:0;cursor:pointer;" onclick="startEdit('${t.id}')">
       <div style="font-size:15px;color:${textColor};text-decoration:${textDeco};font-weight:${textWeight};word-break:break-all;line-height:1.45;">${esc(t.text)}</div>
-      <div style="display:flex;align-items:center;gap:4px;margin-top:4px;flex-wrap:wrap;">${catLabel}${impBadge}</div>
+      <div style="display:flex;align-items:center;gap:4px;margin-top:4px;flex-wrap:wrap;">${catLabel}${impBadge}${onholdBadge}</div>
     </div>
-    ${completedActions}
-  `;
+    ${flagBtn}${completedActions}`;
 
-  /* 編集パネル */
-  const stBtns = [
-    { v:'pending',   l:'□ 未完', ac:'#3b82f6', ab:'#eff6ff', ae:'#93c5fd', ic:'#64748b', ib:'#f8fafc', ie:'#e2e8f0' },
-    { v:'onhold',    l:'⏸ 保留', ac:'#d97706', ab:'#fffbeb', ae:'#fbbf24', ic:'#92400e', ib:'#fffbeb', ie:'#fde68a' },
-    { v:'completed', l:'✓ 完了', ac:'#22c55e', ab:'#f0fdf4', ae:'#86efac', ic:'#166534', ib:'#f0fdf4', ie:'#bbf7d0' },
-  ].map(b => {
-    const on = S.editStatus===b.v;
-    return `<button onclick="setEditStatus('${b.v}')" class="status-sel-btn"
-      style="border-color:${on?b.ae:b.ie};background:${on?b.ab:b.ib};color:${on?b.ac:b.ic};font-weight:${on?700:500};box-shadow:${on?'0 0 0 2px '+b.ae:'none'};">
-      ${b.l}
-    </button>`;
-  }).join('');
+  const stBtns=[
+    {v:'pending', l:'□ 未完',ac:'#3b82f6',ab:'#eff6ff',ae:'#93c5fd',ic:'#64748b',ib:'#f8fafc',ie:'#e2e8f0'},
+    {v:'onhold',  l:'⏸ 保留',ac:'#d97706',ab:'#fffbeb',ae:'#fbbf24',ic:'#92400e',ib:'#fffbeb',ie:'#fde68a'},
+    {v:'completed',l:'✓ 完了',ac:'#22c55e',ab:'#f0fdf4',ae:'#86efac',ic:'#166534',ib:'#f0fdf4',ie:'#bbf7d0'},
+  ].map(b=>{const on=S.editStatus===b.v;return`<button onclick="setEditStatus('${b.v}')" class="status-sel-btn"
+    style="border-color:${on?b.ae:b.ie};background:${on?b.ab:b.ib};color:${on?b.ac:b.ic};font-weight:${on?700:500};box-shadow:${on?'0 0 0 2px '+b.ae:'none'};">${b.l}</button>`;}).join('');
 
-  const editContent = `
+  const editContent=`
     <div style="flex:1;min-width:0;">
       <div class="edit-panel" style="display:flex;flex-direction:column;gap:8px;">
         <input id="editInput_${t.id}" type="text" inputmode="text" autocomplete="off"
-          value="${esc(S.editText)}"
-          oninput="S.editText=this.value"
-          onkeydown="if(event.key==='Enter'&&!event.isComposing)saveEdit('${t.id}'); if(event.key==='Escape')cancelEdit();"
+          value="${esc(S.editText)}" oninput="S.editText=this.value"
+          onkeydown="if(event.key==='Enter'&&!event.isComposing)saveEdit('${t.id}');if(event.key==='Escape')cancelEdit();"
           style="width:100%;min-height:42px;padding:0 12px;border-radius:10px;border:1.5px solid #93c5fd;background:#fff;font-size:15px;color:#1e293b;box-shadow:0 0 0 3px rgba(59,130,246,.1);" />
         <div style="display:flex;gap:5px;">${stBtns}</div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
@@ -649,40 +527,31 @@ function taskRow(t) {
             style="border-radius:10px;background:#3b82f6;color:#fff;border:none;font-size:13px;font-weight:700;padding:0 16px;cursor:pointer;">保存</button>
         </div>
       </div>
-    </div>
-  `;
-
-  return `
-    <div class="task-enter ${impClass} ${ohClass}"
-      style="margin:4px 10px;border-radius:16px;border:1px solid ${rowBorder};display:flex;align-items:${isEditing?'flex-start':'center'};gap:${isEditing?'0':'8px'};padding:${isEditing?'12px':'10px'};transition:opacity .2s,box-shadow .15s;">
-      ${isEditing ? editContent : normalContent}
     </div>`;
+
+  return`<div id="task_${t.id}" data-task-id="${t.id}"
+    class="task-enter ${impClass} ${onholdClass}"
+    draggable="${!isCompleted&&!isEditing}"
+    ondragstart="dStart(event,'${t.id}')" ondragover="dOver(event,'${t.id}')"
+    ondrop="dDrop(event,'${t.id}')" ondragend="dEnd(event,'${t.id}')"
+    style="margin:4px 10px;border-radius:16px;border:1px solid ${rowBorder};display:flex;align-items:${isEditing?'flex-start':'center'};gap:${isEditing?'0':'2px'};padding:${isEditing?'12px':'8px'};transition:box-shadow .15s;">
+    ${isEditing?editContent:normalContent}
+  </div>`;
 }
 
-/* ════════════════════════════════
-   EMPTY STATE
-════════════════════════════════ */
-function emptyState() {
-  const msgs = { all:'タスクなし 🎉', work:'仕事タスクなし', personal:'個人タスクなし', completed:'完了済みタスクなし' };
-  return `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#cbd5e1;">
-      <i data-lucide="check-circle-2" style="width:56px;height:56px;margin-bottom:12px;"></i>
-      <p style="font-size:14px;font-weight:500;">${msgs[S.tab]||'タスクなし'}</p>
-    </div>`;
+/* ════════ EMPTY STATE ════════ */
+function emptyState(){
+  const msgs={all:'タスクなし 🎉',work:'仕事タスクなし',personal:'個人タスクなし',completed:'完了済みタスクなし'};
+  return`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#cbd5e1;">
+    <i data-lucide="check-circle-2" style="width:56px;height:56px;margin-bottom:12px;"></i>
+    <p style="font-size:14px;font-weight:500;">${msgs[S.tab]||'タスクなし'}</p>
+  </div>`;
 }
 
-/* ════════════════════════════════
-   INIT
-════════════════════════════════ */
+/* ════════ INIT ════════ */
 render();
-
-// 保存済みのFirebase設定があれば自動接続
-const savedConfig = loadFbConfig();
-if (savedConfig) {
-  S.syncStatus = 'connecting';
-  render();
-  setTimeout(() => initFirebase(savedConfig), 300);
-}
+const savedCfg=loadFbConfig();
+if(savedCfg){S.syncStatus='connecting';render();setTimeout(()=>initFirebase(savedCfg),300);}
 </script>
 </body>
 </html>
