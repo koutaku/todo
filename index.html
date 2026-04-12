@@ -89,6 +89,7 @@ const TAB_COLORS={
   all:      {active:'#3b82f6',icon:'📋',badge:'#dbeafe',badgeText:'#1d4ed8'},
   work:     {active:'#f97316',icon:'🏢',badge:'#fed7aa',badgeText:'#c2410c'},
   personal: {active:'#22c55e',icon:'🏠',badge:'#bbf7d0',badgeText:'#15803d'},
+  want:     {active:'#ec4899',icon:'⭐',badge:'#fce7f3',badgeText:'#9d174d'},
   completed:{active:'#8b5cf6',icon:'✅',badge:'#ddd6fe',badgeText:'#6d28d9'},
 };
 
@@ -275,13 +276,13 @@ function saveEdit(id){
 }
 function focusEdit(){setTimeout(()=>{const el=document.getElementById('editInput_'+S.editingId);if(el){el.focus();const l=el.value.length;el.setSelectionRange(l,l);}},20);}
 function setEditStatus(s){S.editStatus=s;render();focusEdit();}
-function toggleEditCat(){S.editCat=S.editCat==='work'?'personal':'work';render();focusEdit();}
+function toggleEditCat(){const c=['work','personal','want'];S.editCat=c[(c.indexOf(S.editCat)+1)%c.length];render();focusEdit();}
 function toggleEditImp(){S.editImp=!S.editImp;render();focusEdit();}
 
 /* ════════ UI CONTROLS ════════ */
 function setTab(tab){S.editingId=null;S.tab=tab;render();}
 function toggleSort(){S.sortMode=S.sortMode==='importance'?'registered':'importance';render();}
-function toggleCat(){S.inputCat=S.inputCat==='work'?'personal':'work';S.focusInput=true;render();}
+function toggleCat(){const c=['work','personal','want'];S.inputCat=c[(c.indexOf(S.inputCat)+1)%c.length];S.focusInput=true;render();}
 function toggleImp(){S.inputImp=!S.inputImp;S.focusInput=true;render();}
 function openSetup(){S.showSetup=true;render();}
 function closeSetup(){S.showSetup=false;render();}
@@ -297,6 +298,7 @@ function visible(){
   if(S.tab==='all')      return sorted(active);
   if(S.tab==='work')     return sorted(active.filter(t=>t.cat==='work'));
   if(S.tab==='personal') return sorted(active.filter(t=>t.cat==='personal'));
+  if(S.tab==='want')     return sorted(active.filter(t=>t.cat==='want'));
   return[];
 }
 function cnt(tab){
@@ -305,6 +307,7 @@ function cnt(tab){
   if(tab==='all')      return a.length;
   if(tab==='work')     return a.filter(t=>t.cat==='work').length;
   if(tab==='personal') return a.filter(t=>t.cat==='personal').length;
+  if(tab==='want')     return a.filter(t=>t.cat==='want').length;
   return 0;
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -362,7 +365,7 @@ function render(){
   const tasks=visible(),isCompleted=S.tab==='completed';
   document.getElementById('app').innerHTML=`
     <div style="background:#fff;border-bottom:1px solid #e2e8f0;position:sticky;top:0;z-index:30;box-shadow:0 2px 8px rgba(0,0,0,.06);">
-      <div style="display:flex;">${tabBtn('all')}${tabBtn('work')}${tabBtn('personal')}${tabBtn('completed')}</div>
+      <div style="display:flex;">${tabBtn('all')}${tabBtn('work')}${tabBtn('personal')}${tabBtn('want')}${tabBtn('completed')}</div>
       <div style="display:flex;align-items:center;justify-content:flex-end;padding:4px 10px 6px;border-top:1px solid #f8fafc;">
         ${syncIndicatorHTML()}
       </div>
@@ -402,8 +405,8 @@ function render(){
           onkeydown="if(event.key==='Enter'&&!event.isComposing)addTask()"
           style="flex:1;min-height:44px;padding:0 12px;border-radius:12px;border:1.5px solid #e2e8f0;background:#f8fafc;font-size:15px;color:#1e293b;" />
         <button onclick="toggleCat()" class="action-btn"
-          style="border-radius:12px;background:${S.inputCat==='work'?'#fff7ed':'#f0fdf4'};color:${S.inputCat==='work'?'#f97316':'#22c55e'};border:1.5px solid ${S.inputCat==='work'?'#fed7aa':'#bbf7d0'};font-size:12px;font-weight:700;padding:0 10px;cursor:pointer;flex-shrink:0;white-space:nowrap;">
-          ${S.inputCat==='work'?'🏢 仕事':'🏠 個人'}
+          style="border-radius:12px;background:${S.inputCat==='work'?'#fff7ed':S.inputCat==='want'?'#fdf2f8':'#f0fdf4'};color:${S.inputCat==='work'?'#f97316':S.inputCat==='want'?'#ec4899':'#22c55e'};border:1.5px solid ${S.inputCat==='work'?'#fed7aa':S.inputCat==='want'?'#fbcfe8':'#bbf7d0'};font-size:12px;font-weight:700;padding:0 10px;cursor:pointer;flex-shrink:0;white-space:nowrap;">
+          ${S.inputCat==='work'?'🏢 仕事':S.inputCat==='want'?'⭐ やりたい':'🏠 個人'}
         </button>
         <button onclick="addTask()" class="action-btn"
           style="border-radius:12px;background:#3b82f6;color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
@@ -426,7 +429,7 @@ function render(){
 /* ════════ TAB BUTTON ════════ */
 function tabBtn(id){
   const active=S.tab===id,c=cnt(id),col=TAB_COLORS[id];
-  const labels={all:'全タスク',work:'仕事',personal:'個人',completed:'完了'};
+  const labels={all:'全タスク',work:'仕事',personal:'個人',want:'やりたい',completed:'完了'};
   const bg=active?col.active:'#f8fafc',tc=active?'#fff':'#94a3b8';
   return`<button onclick="setTab('${id}')" class="tab-btn"
     style="background:${bg};color:${tc};border-top:none;border-left:none;border-right:none;border-bottom:${active?'3px solid rgba(0,0,0,.15)':'3px solid transparent'};">
@@ -453,6 +456,8 @@ function taskRow(t){
 
   const catLabel=t.cat==='work'
     ?`<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#fff7ed;color:#fb923c;font-weight:600;">🏢 仕事</span>`
+    :t.cat==='want'
+    ?`<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#fdf2f8;color:#f472b6;font-weight:600;">⭐ やりたい</span>`
     :`<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#f0fdf4;color:#4ade80;font-weight:600;">🏠 個人</span>`;
   const impBadge=(t.imp&&!isCompleted)
     ?`<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#ef4444;font-weight:700;border:1px solid #fca5a5;">⚑ 重要</span>`:'';
@@ -513,8 +518,8 @@ function taskRow(t){
         <div style="display:flex;gap:5px;">${stBtns}</div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <button onclick="toggleEditCat()" class="action-btn"
-            style="border-radius:10px;background:${S.editCat==='work'?'#fff7ed':'#f0fdf4'};color:${S.editCat==='work'?'#f97316':'#22c55e'};border:1.5px solid ${S.editCat==='work'?'#fed7aa':'#bbf7d0'};font-size:12px;font-weight:700;padding:0 12px;cursor:pointer;white-space:nowrap;">
-            ${S.editCat==='work'?'🏢 仕事':'🏠 個人'}
+            style="border-radius:10px;background:${S.editCat==='work'?'#fff7ed':S.editCat==='want'?'#fdf2f8':'#f0fdf4'};color:${S.editCat==='work'?'#f97316':S.editCat==='want'?'#ec4899':'#22c55e'};border:1.5px solid ${S.editCat==='work'?'#fed7aa':S.editCat==='want'?'#fbcfe8':'#bbf7d0'};font-size:12px;font-weight:700;padding:0 12px;cursor:pointer;white-space:nowrap;">
+            ${S.editCat==='work'?'🏢 仕事':S.editCat==='want'?'⭐ やりたい':'🏠 個人'}
           </button>
           <button onclick="toggleEditImp()" class="action-btn"
             style="border-radius:10px;background:${S.editImp?'#fef2f2':'#f8fafc'};color:${S.editImp?'#ef4444':'#94a3b8'};border:1.5px solid ${S.editImp?'#fca5a5':'#e2e8f0'};font-size:12px;font-weight:700;padding:0 12px;cursor:pointer;white-space:nowrap;">
@@ -541,7 +546,7 @@ function taskRow(t){
 
 /* ════════ EMPTY STATE ════════ */
 function emptyState(){
-  const msgs={all:'タスクなし 🎉',work:'仕事タスクなし',personal:'個人タスクなし',completed:'完了済みタスクなし'};
+  const msgs={all:'タスクなし 🎉',work:'仕事タスクなし',personal:'個人タスクなし',want:'やりたいことを追加しましょう ⭐',completed:'完了済みタスクなし'};
   return`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#cbd5e1;">
     <i data-lucide="check-circle-2" style="width:56px;height:56px;margin-bottom:12px;"></i>
     <p style="font-size:14px;font-weight:500;">${msgs[S.tab]||'タスクなし'}</p>
